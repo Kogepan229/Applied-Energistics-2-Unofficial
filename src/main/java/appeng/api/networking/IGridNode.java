@@ -21,6 +21,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 
 import appeng.api.IAppEngApi;
 import appeng.api.util.IReadOnlyCollection;
+import appeng.me.GridConnection;
 
 /**
  * Gives you a view into your Nodes connections and information.
@@ -85,7 +86,7 @@ public interface IGridNode {
      *
      * @return grid connections
      */
-    IReadOnlyCollection<IGridConnection> getConnections();
+    IReadOnlyCollection<GridConnection> getConnections();
 
     /**
      * @return the IGridBlock for this node

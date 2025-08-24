@@ -40,7 +40,6 @@ import appeng.api.parts.IPartRenderHelper;
 import appeng.api.util.AECableType;
 import appeng.api.util.AEColor;
 import appeng.api.util.AEColoredItemDefinition;
-import appeng.api.util.IReadOnlyCollection;
 import appeng.block.AEBaseBlock;
 import appeng.client.texture.CableBusTextures;
 import appeng.client.texture.FlippableIcon;
@@ -353,8 +352,7 @@ public class PartCable extends AEBasePart implements IPartCable {
                 final IPart part = this.getHost().getPart(thisSide);
                 if (part != null) {
                     if (part.getGridNode() != null) {
-                        final IReadOnlyCollection<IGridConnection> set = part.getGridNode().getConnections();
-                        for (final IGridConnection gc : set) {
+                        for (final IGridConnection gc : part.getGridNode().getConnections()) {
                             if (this.getProxy().getNode().hasFlag(GridFlags.DENSE_CAPACITY)
                                     && gc.getOtherSide(this.getProxy().getNode()).hasFlag(GridFlags.DENSE_CAPACITY)) {
                                 sideOut |= (gc.getUsedChannels() / 4) << (4 * thisSide.ordinal());

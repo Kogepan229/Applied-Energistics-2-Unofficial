@@ -55,7 +55,7 @@ public class GridNode implements IGridNode, IPathItem {
     private static final MENetworkChannelsChanged EVENT = new MENetworkChannelsChanged();
     private static final int[] CHANNEL_COUNT = { 0, 8, 32, 128 };
 
-    private final List<IGridConnection> connections = new LinkedList<>();
+    private final List<GridConnection> connections = new LinkedList<>();
     private final IGridBlock gridProxy;
     // old power draw, used to diff
     private double previousDraw = 0.0;
@@ -114,14 +114,14 @@ public class GridNode implements IGridNode, IPathItem {
         return this.getMachine().getClass();
     }
 
-    void addConnection(final IGridConnection gridConnection) {
+    void addConnection(final GridConnection gridConnection) {
         this.connections.add(gridConnection);
         if (gridConnection.hasDirection()) {
             this.gridProxy.onGridNotification(GridNotification.ConnectionsChanged);
         }
     }
 
-    void removeConnection(final IGridConnection gridConnection) {
+    void removeConnection(final GridConnection gridConnection) {
         this.connections.remove(gridConnection);
         if (gridConnection.hasDirection()) {
             this.gridProxy.onGridNotification(GridNotification.ConnectionsChanged);
@@ -129,7 +129,7 @@ public class GridNode implements IGridNode, IPathItem {
     }
 
     boolean hasConnection(final IGridNode otherSide) {
-        for (final IGridConnection gc : this.connections) {
+        for (final GridConnection gc : this.connections) {
             if (gc.a() == otherSide || gc.b() == otherSide) {
                 return true;
             }
@@ -273,14 +273,14 @@ public class GridNode implements IGridNode, IPathItem {
     @Override
     public EnumSet<ForgeDirection> getConnectedSides() {
         final EnumSet<ForgeDirection> set = EnumSet.noneOf(ForgeDirection.class);
-        for (final IGridConnection gc : this.connections) {
+        for (final GridConnection gc : this.connections) {
             set.add(gc.getDirection(this));
         }
         return set;
     }
 
     @Override
-    public IReadOnlyCollection<IGridConnection> getConnections() {
+    public IReadOnlyCollection<GridConnection> getConnections() {
         return new ReadOnlyCollection<>(this.connections);
     }
 
@@ -464,12 +464,11 @@ public class GridNode implements IGridNode, IPathItem {
     private void visitorConnection(final Object tracker, final IGridVisitor g, final Deque<GridNode> nextRun,
             final Deque<IGridConnection> nextConnections) {
         if (g.visitNode(this)) {
-            for (final IGridConnection gc : this.getConnections()) {
+            for (final GridConnection gc : this.getConnections()) {
                 final GridNode gn = (GridNode) gc.getOtherSide(this);
-                final GridConnection gcc = (GridConnection) gc;
 
-                if (gcc.getVisitorIterationNumber() != tracker) {
-                    gcc.setVisitorIterationNumber(tracker);
+                if (gc.getVisitorIterationNumber() != tracker) {
+                    gc.setVisitorIterationNumber(tracker);
                     nextConnections.add(gc);
                 }
 
@@ -522,7 +521,7 @@ public class GridNode implements IGridNode, IPathItem {
                     String.format("Node %s has no connections, cannot have a controller route!", this));
         }
 
-        return (IPathItem) this.connections.get(0);
+        return this.connections.get(0);
     }
 
     public @Nullable GridNode getHighestSimilarAncestor() {
@@ -578,8 +577,8 @@ public class GridNode implements IGridNode, IPathItem {
     public int propagateChannelsUpwards(boolean consumesChannel) {
         this.usedChannels = 0;
         for (var connection : connections) {
-            if (((GridConnection) connection).getControllerRoute() == this) {
-                this.usedChannels += ((GridConnection) connection).usedChannels;
+            if (connection.getControllerRoute() == this) {
+                this.usedChannels += connection.usedChannels;
             }
         }
         if (consumesChannel) {
