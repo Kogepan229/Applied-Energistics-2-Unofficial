@@ -17,24 +17,22 @@ import appeng.api.util.IReadOnlyCollection;
 
 public interface IPathItem {
 
+    /* USED BY AD HOC PATHING */
+    void setAdHocChannels(int channels);
+
+    /* USED BY CONTROLLER PATHING */
+
     IPathItem getControllerRoute();
 
-    void setControllerRoute(IPathItem fast, boolean zeroOut);
-
     /**
-     * used to determine if the finder can continue.
+     * Sets route to controller.
      */
-    boolean canSupportMoreChannels();
+    void setControllerRoute(IPathItem fast, boolean zeroOut);
 
     /**
      * find possible choices for other pathing.
      */
     IReadOnlyCollection<IPathItem> getPossibleOptions();
-
-    /**
-     * add one to the channel count, this is mostly for cables.
-     */
-    void incrementChannelCount(int usedChannels);
 
     /**
      * get the grid flags for this IPathItem.

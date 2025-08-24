@@ -39,8 +39,16 @@ public class GridConnection implements IGridConnection, IPathItem {
 
     private static final String EXISTING_CONNECTION_MESSAGE = "Connection between node [machine=%s, %s] and [machine=%s, %s] on [%s] already exists.";
 
+    /**
+     * Will be modified during pathing and should not be exposed outside of that purpose.
+     */
+    public int usedChannels = 0;
+    /**
+     * Finalized version of {@link #usedChannels} once pathing is done.
+     */
+    private int lastUsedChannels = 0;
+
     private static final MENetworkChannelsChanged EVENT = new MENetworkChannelsChanged();
-    private int channelData = 0;
     private Object visitorIterationNumber = null;
     private GridNode sideA;
     private ForgeDirection fromAtoB;
@@ -192,22 +200,23 @@ public class GridConnection implements IGridConnection, IPathItem {
 
     @Override
     public int getUsedChannels() {
-        return (this.channelData >> 8) & 0xff;
+        // return (this.channelData >> 8) & 0xff;
+        return this.lastUsedChannels;
+    }
+
+    @Override
+    public void setAdHocChannels(int channels) {
+        this.usedChannels = channels;
     }
 
     @Override
     public IPathItem getControllerRoute() {
-        if (this.sideA.getFlags().contains(GridFlags.CANNOT_CARRY)) {
-            return null;
-        }
         return this.sideA;
     }
 
     @Override
     public void setControllerRoute(final IPathItem fast, final boolean zeroOut) {
-        if (zeroOut) {
-            this.channelData &= ~0xff;
-        }
+        this.usedChannels = 0;
 
         if (this.sideB == fast) {
             final GridNode tmp = this.sideA;
@@ -218,18 +227,8 @@ public class GridConnection implements IGridConnection, IPathItem {
     }
 
     @Override
-    public boolean canSupportMoreChannels() {
-        return this.getLastUsedChannels() < 32; // max, PERIOD.
-    }
-
-    @Override
     public IReadOnlyCollection<IPathItem> getPossibleOptions() {
         return new ReadOnlyCollection<>(Arrays.asList((IPathItem) this.a(), (IPathItem) this.b()));
-    }
-
-    @Override
-    public void incrementChannelCount(final int usedChannels) {
-        this.channelData += usedChannels;
     }
 
     @Override
@@ -237,11 +236,19 @@ public class GridConnection implements IGridConnection, IPathItem {
         return EnumSet.noneOf(GridFlags.class);
     }
 
+    public int propagateChannelsUpwards() {
+        if (this.sideB.getControllerRoute() == this) { // Check that we are in B's route
+            this.usedChannels = this.sideB.usedChannels;
+        } else {
+            this.usedChannels = 0;
+        }
+        return this.usedChannels;
+    }
+
     @Override
     public void finalizeChannels() {
-        if (this.getUsedChannels() != this.getLastUsedChannels()) {
-            this.channelData &= 0xff;
-            this.channelData |= this.channelData << 8;
+        if (this.lastUsedChannels != this.usedChannels) {
+            this.lastUsedChannels = this.usedChannels;
 
             if (this.sideA.getInternalGrid() != null) {
                 this.sideA.getInternalGrid().postEventTo(this.sideA, EVENT);
@@ -251,10 +258,6 @@ public class GridConnection implements IGridConnection, IPathItem {
                 this.sideB.getInternalGrid().postEventTo(this.sideB, EVENT);
             }
         }
-    }
-
-    private int getLastUsedChannels() {
-        return this.channelData & 0xff;
     }
 
     Object getVisitorIterationNumber() {

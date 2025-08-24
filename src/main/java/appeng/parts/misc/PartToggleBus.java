@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 
-import appeng.api.networking.GridFlags;
 import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
@@ -27,6 +26,7 @@ import org.lwjgl.opengl.GL11;
 
 import appeng.api.AEApi;
 import appeng.api.exceptions.FailedConnection;
+import appeng.api.networking.GridFlags;
 import appeng.api.networking.IGridConnection;
 import appeng.api.networking.IGridNode;
 import appeng.api.parts.IPartCollisionHelper;

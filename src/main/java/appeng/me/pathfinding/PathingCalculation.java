@@ -10,11 +10,13 @@
 
 package appeng.me.pathfinding;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Queue;
 import java.util.Set;
 
 import appeng.api.networking.GridFlags;
@@ -26,29 +28,46 @@ import appeng.me.GridConnection;
 import appeng.me.GridNode;
 import appeng.tile.networking.TileController;
 import appeng.tile.networking.TileCreativeEnergyController;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 
 /**
- * Calculation to assign channels starting from the controllers. Basically a BFS, with one step each tick.
+ * Calculation to assign channels starting from the controllers. The full computation is split in two steps, each linear
+ * time.
+ * <p>
+ * First, a BFS is performed starting from the controllers. This establishes a tree that connects all path items to a
+ * controller. As nodes that require channels are visited, they are assigned a channel if possible. This is done by
+ * checking the channel count of a few key nodes (max 3) along the path.
+ * <p>
+ * Second, a DFS is performed to propagate the channel count upwards.
  */
 public class PathingCalculation {
 
+    private final IGrid grid;
     /**
      * Path items that are part of a multiblock that was already granted a channel.
      */
-    private final Set<IPathItem> multiblocksWithChannel = new HashSet<>();
+    private final Set<GridNode> multiblocksWithChannel = new HashSet<>();
     /**
      * The BFS queues: all the path items that need to be visited on the next tick. Dense queue is prioritized to have
      * the behavior of dense cables extending the controller faces, then cables, then normal devices.
      */
-    private List<IPathItem>[] queues = new List[] {
-            new ArrayList<>(), // 0: dense cable queue
-            new ArrayList<>(), // 1: normal cable queue
-            new ArrayList<>() // 2: non-cable queue
+    private final Queue<IPathItem>[] queues = new Queue[] { new ArrayDeque<>(), // 0: dense cable queue
+            new ArrayDeque<>(), // 1: normal cable queue
+            new ArrayDeque<>() // 2: non-cable queue
     };
     /**
-     * Path items that are either in the queue, or have been processed already.
+     * Path items that are either in a queue, or have been processed already.
      */
     private final Set<IPathItem> visited = new HashSet<>();
+    /**
+     * Tracks the number of channels assigned to each path item during the BFS pass. Only a few key nodes along any path
+     * are checked and updated.
+     */
+    private final Reference2IntOpenHashMap<GridNode> channelBottlenecks = new Reference2IntOpenHashMap<>();
+    /**
+     * Nodes that have been granted a channel during the BFS pass.
+     */
+    private final Set<GridNode> channelNodes = new HashSet<>();
     /**
      * Tracks the total number of used channels.
      */
@@ -62,6 +81,8 @@ public class PathingCalculation {
      * Create a new pathing calculation from the passed grid.
      */
     public PathingCalculation(IGrid grid) {
+        this.grid = grid;
+
         // Add every outgoing connection of the controllers (that doesn't point to another controller) to the list.
         for (IGridNode node : grid.getMachines(TileController.class)) {
             visited.add((IPathItem) node);
@@ -108,20 +129,19 @@ public class PathingCalculation {
         queues[index].add(pathItem);
     }
 
-    public void step() {
-        // Keep processing dense queue as long as it's not empty.
+    public void compute() {
+        // BFS pass
         for (int i = 0; i < 3; ++i) {
-            if (!queues[i].isEmpty()) {
-                List<IPathItem> oldOpen = queues[i];
-                queues[i] = new ArrayList<>();
-                processQueue(oldOpen, i);
-                break;
-            }
+            processQueue(queues[i], i);
         }
+
+        // DFS pass
+        propagateAssignments();
     }
 
-    private void processQueue(List<IPathItem> oldOpen, int queueIndex) {
-        for (final IPathItem i : oldOpen) {
+    private void processQueue(Queue<IPathItem> oldOpen, int queueIndex) {
+        while (!oldOpen.isEmpty()) {
+            IPathItem i = oldOpen.poll();
             for (final IPathItem pi : i.getPossibleOptions()) {
                 if (!this.visited.contains(pi)) {
                     // Set BFS parent.
@@ -129,14 +149,9 @@ public class PathingCalculation {
 
                     final EnumSet<GridFlags> flags = pi.getFlags();
                     if (flags.contains(GridFlags.REQUIRE_CHANNEL)) {
-                        if (this.multiblocksWithChannel.contains(pi)) {
-                            // If this is part of a multiblock that was given a channel before, just give a channel to
-                            // the node.
-                            pi.incrementChannelCount(1);
-                            this.multiblocksWithChannel.remove(pi);
-                        } else {
-                            // Otherwise try to use the channel along the path.
-                            boolean worked = tryUseChannel(pi);
+                        if (!this.multiblocksWithChannel.contains((GridNode) pi)) {
+                            // Try to use the channel along the path.
+                            boolean worked = tryUseChannel((GridNode) pi);
 
                             if (worked && flags.contains(GridFlags.MULTIBLOCK)) {
                                 final Iterator<IGridNode> oni = ((IGridMultiblock) ((IGridNode) pi).getGridBlock())
@@ -144,7 +159,7 @@ public class PathingCalculation {
                                 while (oni.hasNext()) {
                                     final IGridNode otherNodes = oni.next();
                                     if (otherNodes != pi) {
-                                        this.multiblocksWithChannel.add((IPathItem) otherNodes);
+                                        this.multiblocksWithChannel.add((GridNode) otherNodes);
                                     }
                                 }
                             }
@@ -162,43 +177,95 @@ public class PathingCalculation {
      *
      * @return true if allocation was successful
      */
-    private boolean tryUseChannel(IPathItem start) {
+    private boolean tryUseChannel(GridNode start) {
         final EnumSet<GridFlags> flags = start.getFlags();
-        boolean isCompressed = flags.contains(GridFlags.COMPRESSED_CHANNEL);
+        if (flags.contains(GridFlags.COMPRESSED_CHANNEL) && !start.getSubtreeAllowsCompressedChannels()) {
+            // Don't send a compressed channel through this item.
+            return false;
+        }
 
         // Check that the allocation is possible.
-        IPathItem pi = start;
+        GridNode pi = start;
         while (pi != null) {
-            if (!pi.canSupportMoreChannels()) {
-                return false;
-            }
-            if (isCompressed && flags.contains(GridFlags.CANNOT_CARRY_COMPRESSED)) {
+            if (channelBottlenecks.getOrDefault(pi, 0) >= pi.getMaxChannels()) {
                 // Don't send a compressed channel through this item.
                 return false;
             }
 
-            pi = pi.getControllerRoute();
+            pi = pi.getHighestSimilarAncestor();
         }
 
         // Allocate the channel along the path.
         pi = start;
         while (pi != null) {
-            channelsByBlocks++;
-            pi.incrementChannelCount(1);
-            pi = pi.getControllerRoute();
+            channelBottlenecks.addTo(pi, 1);
+            pi = pi.getHighestSimilarAncestor();
         }
 
-        channelsInUse++;
+        channelNodes.add(start);
         return true;
     }
 
-    public boolean isFinished() {
-        for (List<IPathItem> queue : queues) {
-            if (!queue.isEmpty()) {
-                return false;
+    private static final Object SUBTREE_END = new Object();
+
+    /**
+     * Propagates assignment to all nodes by performing a DFS. The implementation is iterative to avoid stack overflow.
+     */
+    private void propagateAssignments() {
+        List<Object> stack = new ArrayList<>();
+        Set<IPathItem> controllerNodes = new HashSet<>();
+
+        for (var node : grid.getMachines(TileController.class)) {
+            controllerNodes.add((IPathItem) node);
+            for (var gcc : node.getConnections()) {
+                var gc = (GridConnection) gcc;
+                if (!(gc.getOtherSide(node).getMachine() instanceof TileController)) {
+                    stack.add(gc);
+                }
             }
         }
-        return true;
+        for (var node : grid.getMachines(TileCreativeEnergyController.class)) {
+            controllerNodes.add((IPathItem) node);
+            for (var gcc : node.getConnections()) {
+                var gc = (GridConnection) gcc;
+                if (!(gc.getOtherSide(node).getMachine() instanceof TileController)) {
+                    stack.add(gc);
+                }
+            }
+        }
+
+        while (!stack.isEmpty()) {
+            Object current = stack.get(stack.size() - 1);
+            if (current == SUBTREE_END) {
+                stack.remove(stack.size() - 1);
+                IPathItem item = (IPathItem) stack.remove(stack.size() - 1);
+                // We have visited the entire subtree and can now propagate channels upwards.
+                if (item instanceof GridNode node) {
+                    boolean hasChannel = channelNodes.contains(item);
+                    channelsByBlocks += node.propagateChannelsUpwards(hasChannel);
+                    if (hasChannel) {
+                        channelsInUse++;
+                    }
+                } else {
+                    channelsByBlocks += ((GridConnection) item).propagateChannelsUpwards();
+                }
+            } else {
+                stack.add(SUBTREE_END);
+                for (var pi : ((IPathItem) current).getPossibleOptions()) {
+                    // The neighbor could either be: a child, the parent, or in a different tree if it is closer to
+                    // another controller. It is a child if we are its parent.
+                    // We need to exclude controller nodes because their getControllerRoute() is nonsense.
+                    if (!controllerNodes.contains(pi) && pi.getControllerRoute() == current) {
+                        stack.add(pi);
+                    }
+                }
+            }
+        }
+
+        // Give a channel to all nodes that are a part of a multiblock that was given a channel before.
+        for (var multiblockNode : multiblocksWithChannel) {
+            multiblockNode.incrementChannelCount(1);
+        }
     }
 
     public int getChannelsInUse() {

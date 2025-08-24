@@ -38,7 +38,7 @@ import appeng.core.AELog;
 import appeng.core.features.AEFeature;
 import appeng.core.stats.Achievements;
 import appeng.me.pathfinding.AdHocChannelUpdater;
-import appeng.me.pathfinding.ControllerChannelUpdater;
+import appeng.me.pathfinding.ChannelFinalizer;
 import appeng.me.pathfinding.ControllerValidator;
 import appeng.me.pathfinding.IPathItem;
 import appeng.me.pathfinding.PathingCalculation;
@@ -47,7 +47,6 @@ import appeng.util.Platform;
 
 public class PathGridCache implements IPathingGrid {
 
-    private PathingCalculation ongoingCalculation = null;
     private final Set<TileController> controllers = new HashSet<>();
     private final Set<IGridNode> requireChannels = new HashSet<>();
     private final Set<IGridNode> blockDense = new HashSet<>();
@@ -59,7 +58,6 @@ public class PathGridCache implements IPathingGrid {
     private boolean updateNetwork = true;
     private boolean booting = false;
     private ControllerState controllerState = ControllerState.NO_CONTROLLER;
-    private int ticksUntilReady = 20;
     private int lastChannels = 0;
     private HashSet<IPathItem> semiOpen = new HashSet<>();
 
@@ -74,14 +72,13 @@ public class PathGridCache implements IPathingGrid {
         }
 
         if (this.updateNetwork) {
-            if (!this.booting) {
-                this.myGrid.postEvent(new MENetworkBootingStatusChange(true));
-            }
-
-            this.booting = true;
             this.updateNetwork = false;
+
+            // Preserve the illusion that the network is booting for a while before channel assignment completes.
+            this.booting = true;
+            this.myGrid.postEvent(new MENetworkBootingStatusChange(true));
+
             this.channelsInUse = 0;
-            // this.setChannelsInUse(0);
 
             if (this.controllerState == ControllerState.NO_CONTROLLER) {
                 final int requiredChannels = this.calculateRequiredChannels();
@@ -92,84 +89,31 @@ public class PathGridCache implements IPathingGrid {
 
                 final int nodes = this.myGrid.getNodes().size();
                 this.channelsInUse = used;
-                // this.setChannelsInUse(used);
 
-                this.ticksUntilReady = 20 + Math.max(0, nodes / 100 - 20);
-                // this.setChannelsByBlocks(nodes * used);
-                // this.setChannelPowerUsage(this.getChannelsByBlocks() / 128.0);
                 this.channelsByBlocks = nodes * used;
                 this.setChannelPowerUsage(this.channelsByBlocks / 128.0);
 
                 this.myGrid.getPivot().beginVisit(new AdHocChannelUpdater(used));
             } else if (this.controllerState == ControllerState.CONTROLLER_CONFLICT) {
-                this.ticksUntilReady = 20;
                 this.myGrid.getPivot().beginVisit(new AdHocChannelUpdater(0));
+                this.channelsInUse = 0;
+                this.channelsByBlocks = 0;
             } else {
-                final int nodes = this.myGrid.getNodes().size();
-                this.ticksUntilReady = 20 + Math.max(0, nodes / 100 - 20);
-                this.ongoingCalculation = new PathingCalculation(this.myGrid);
-
-                final HashSet<IPathItem> closedList = new HashSet<>();
-                this.semiOpen = new HashSet<>();
-
-                // for (final IGridNode node : this.myGrid.getMachines(TileController.class)) {
-                // closedList.add((IPathItem) node);
-                // for (final IGridConnection gcc : node.getConnections()) {
-                // final GridConnection gc = (GridConnection) gcc;
-                // if (!(gc.getOtherSide(node).getMachine() instanceof TileController)) {
-                // final List<IPathItem> open = new LinkedList<>();
-                // closedList.add(gc);
-                // open.add(gc);
-                // gc.setControllerRoute((GridNode) node, true);
-                // this.active.add(new PathSegment(this, open, this.semiOpen, closedList));
-                // }
-                // }
-                // }
-                // for (final IGridNode node : this.myGrid.getMachines(TileCreativeEnergyController.class)) {
-                // closedList.add((IPathItem) node);
-                // for (final IGridConnection gcc : node.getConnections()) {
-                // final GridConnection gc = (GridConnection) gcc;
-                // if (!(gc.getOtherSide(node).getMachine() instanceof TileController)) {
-                // final List<IPathItem> open = new LinkedList<>();
-                // closedList.add(gc);
-                // open.add(gc);
-                // gc.setControllerRoute((GridNode) node, true);
-                // this.active.add(new PathSegment(this, open, this.semiOpen, closedList));
-                // }
-                // }
-                // }
-            }
-        }
-
-        if (this.booting) {
-            boolean needsMorePathfinding = false;
-            if (this.ongoingCalculation != null) { // can be null for ad-hoc or invalid controller state
-                needsMorePathfinding = !this.ongoingCalculation.isFinished();
-                this.ongoingCalculation.step();
+                PathingCalculation calculation = new PathingCalculation(this.myGrid);
+                calculation.compute();
+                this.channelsInUse = calculation.getChannelsInUse();
+                this.channelsByBlocks = calculation.getChannelsByBlocks();
             }
 
-            this.ticksUntilReady--;
+            // check for achievements
+            this.achievementPost();
 
-            if (needsMorePathfinding && this.ticksUntilReady <= 0) {
-                this.channelsByBlocks = this.ongoingCalculation.getChannelsByBlocks();
-                this.channelsInUse = this.ongoingCalculation.getChannelsInUse();
-                this.ongoingCalculation = null;
-
-                if (this.controllerState == ControllerState.CONTROLLER_ONLINE) {
-                    final Iterator<TileController> controllerIterator = this.controllers.iterator();
-                    if (controllerIterator.hasNext()) {
-                        final TileController controller = controllerIterator.next();
-                        controller.getGridNode(ForgeDirection.UNKNOWN).beginVisit(new ControllerChannelUpdater());
-                    }
-                }
-
-                // check for achievements
-                this.achievementPost();
-
-                this.booting = false;
-                this.setChannelPowerUsage(this.channelsByBlocks / 128.0);
-                this.myGrid.postEvent(new MENetworkBootingStatusChange(false));
-            }
+            this.booting = false;
+            this.setChannelPowerUsage(this.channelsByBlocks / 128.0);
+            // Notify of channel changes AFTER we set booting to false, this ensures that any activeness check will
+            // properly return true.
+            this.myGrid.getPivot().beginVisit(new ChannelFinalizer());
+            this.myGrid.postEvent(new MENetworkBootingStatusChange(true));
         }
     }
 
@@ -357,8 +301,6 @@ public class PathGridCache implements IPathingGrid {
 
     @Override
     public void repath() {
-        // clean up...
-        this.ongoingCalculation = null;
         this.channelsByBlocks = 0;
         this.updateNetwork = true;
     }
