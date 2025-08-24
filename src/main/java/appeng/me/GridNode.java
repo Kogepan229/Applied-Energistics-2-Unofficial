@@ -91,10 +91,6 @@ public class GridNode implements IGridNode, IPathItem {
         if (gridConnection.hasDirection()) {
             this.gridProxy.onGridNotification(GridNotification.ConnectionsChanged);
         }
-
-        final IGridNode gn = this;
-
-        this.connections.sort(new ConnectionComparator(gn));
     }
 
     void removeConnection(final IGridConnection gridConnection) {
@@ -580,23 +576,6 @@ public class GridNode implements IGridNode, IPathItem {
             this.node.getMachine().securityBreak();
 
             return null;
-        }
-    }
-
-    private static class ConnectionComparator implements Comparator<IGridConnection> {
-
-        private final IGridNode gn;
-
-        public ConnectionComparator(final IGridNode gn) {
-            this.gn = gn;
-        }
-
-        @Override
-        public int compare(final IGridConnection o1, final IGridConnection o2) {
-            final boolean preferredA = o1.getOtherSide(this.gn).hasFlag(GridFlags.PREFERRED);
-            final boolean preferredB = o2.getOtherSide(this.gn).hasFlag(GridFlags.PREFERRED);
-
-            return preferredA == preferredB ? 0 : (preferredA ? -1 : 1);
         }
     }
 }

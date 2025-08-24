@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 
+import appeng.api.networking.GridFlags;
 import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
@@ -53,8 +54,8 @@ public class PartToggleBus extends PartBasicState {
 
         this.getProxy().setIdlePowerUsage(0.0);
         this.getOuterProxy().setIdlePowerUsage(0.0);
-        this.getProxy().setFlags();
-        this.getOuterProxy().setFlags();
+        this.getProxy().setFlags(GridFlags.PREFERRED);
+        this.getOuterProxy().setFlags(GridFlags.PREFERRED);
     }
 
     @Override
